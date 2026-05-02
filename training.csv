@@ -1,0 +1,49 @@
+Sample_ID,Group,Chest expansion exercise,Hand gripping exercise,Shoulder circumduction exercise,Upper limb circumduction exercise,Wall walking exercise
+S01,Post-Treatment Recovery,121.97,149.59,3655.77,19067.39,255.77
+S02,Post-Treatment Recovery,91.25,140.38,3410,5550.24,10
+S03,Post-Treatment Recovery,103.75,144.13,3510.01,11050.65,110.01
+S04,Post-Treatment Recovery,101.16,143.35,3489.28,9910.64,89.28
+S05,Post-Treatment Recovery,126.82,151.05,3694.59,21202.37,294.59
+S06,Post-Treatment Recovery,123.83,150.15,3670.68,19887.39,270.68
+S07,Post-Treatment Recovery,134.61,153.38,3756.87,24627.95,356.87
+S08,Post-Treatment Recovery,94.35,141.3,3434.78,6912.65,34.78
+S09,Post-Treatment Recovery,111.1,146.33,3568.77,14282.28,168.77
+S10,Post-Treatment Recovery,91.49,140.45,3411.92,5655.54,11.92
+S11,Post-Treatment Recovery,100.93,143.28,3487.46,9810.04,87.46
+S12,Post-Treatment Recovery,115.27,147.58,3602.14,16117.82,202.14
+S13,Supportive Maintenance Long-Term,91.33,140.4,3410.61,5583.79,10.61
+S14,Supportive Maintenance Long-Term,99.94,142.98,3479.54,9374.43,79.54
+S15,Supportive Maintenance Long-Term,122.49,149.75,3659.95,19297.46,259.95
+S16,Supportive Maintenance Long-Term,117.25,148.17,3617.98,16988.71,217.98
+S17,Supportive Maintenance Long-Term,101.02,143.31,3488.18,9849.69,88.18
+S18,Supportive Maintenance Long-Term,119.46,148.84,3635.71,17963.85,235.71
+S19,Supportive Maintenance Long-Term,130.47,152.14,3723.77,22807.47,323.77
+S20,Supportive Maintenance Long-Term,90.32,140.1,3402.6,5142.97,2.6
+S21,Supportive Maintenance Long-Term,130.29,152.09,3722.33,22728.02,322.33
+S22,Supportive Maintenance Long-Term,124.91,150.47,3679.26,20359.07,279.26
+S23,Supportive Maintenance Long-Term,107.01,145.1,3536.1,12485.51,136.1
+S24,Supportive Maintenance Long-Term,97.77,142.33,3462.19,8420.55,62.19
+S25,Survivorship Wellness Beyond Cancer,137.86,154.36,3782.89,26058.69,382.89
+S26,Survivorship Wellness Beyond Cancer,106.83,145.05,3534.64,12405.08,134.64
+S27,Survivorship Wellness Beyond Cancer,94.64,141.39,3437.1,7040.41,37.1
+S28,Survivorship Wellness Beyond Cancer,94.84,141.45,3438.69,7127.76,38.69
+S29,Survivorship Wellness Beyond Cancer,132.37,152.71,3739,23644.88,339
+S30,Survivorship Wellness Beyond Cancer,120.19,149.06,3641.49,18281.97,241.49
+S31,Survivorship Wellness Beyond Cancer,130.36,152.11,3722.85,22756.82,322.85
+S32,Survivorship Wellness Beyond Cancer,126.49,150.95,3691.89,21054.1,291.89
+S33,Survivorship Wellness Beyond Cancer,116.81,148.04,3614.49,16797.02,214.49
+S34,Survivorship Wellness Beyond Cancer,138.66,154.6,3789.25,26408.55,389.25
+S35,Survivorship Wellness Beyond Cancer,108.93,145.68,3551.41,13327.76,151.41
+S36,Survivorship Wellness Beyond Cancer,117.6,148.28,3620.82,17144.89,220.82
+S37,Healthy,131.47,152.44,3731.76,23246.9,331.76
+S38,Healthy,120.93,149.28,3647.41,18607.43,247.41
+S39,Healthy,133.09,152.93,3744.68,23957.55,344.68
+S40,Healthy,118.87,148.66,3630.94,17701.75,230.94
+S41,Healthy,90.32,148.84,3635.71,17963.85,235.71
+S42,Healthy,130.29,152.14,3723.77,22807.47,323.77
+S43,Healthy,124.91,140.1,3402.6,5142.97,2.6
+S44,Healthy,107.01,152.09,3722.33,22728.02,322.33
+S45,Healthy,97.77,150.47,3679.26,20359.07,279.26
+S46,Healthy,137.86,145.1,3536.1,12485.51,136.1
+S47,Healthy,106.83,142.33,3462.19,8420.55,62.19
+S48,Healthy,94.64,154.36,3782.89,26058.69,382.89
