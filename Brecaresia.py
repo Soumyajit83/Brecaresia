@@ -363,7 +363,7 @@ class ExerciseGUI:
             s, e, w = kpts[5], kpts[7], kpts[9]
             if name == "Chest expansion":
                 metrics = {"val": self.calculate_angle(s, e, w), "type": "Angle (Degrees)"}
-                if metrics["val"] > 160: is_correct = True
+                if metrics["val"] < 160: is_correct = True
             elif name == "Hand gripping":
                 metrics = {"val": self.calculate_angle(e, w, [w[0], w[1]+100]), "type": "Wrist Angle (Degrees)"}
                 if metrics["val"] > 30: is_correct = True
