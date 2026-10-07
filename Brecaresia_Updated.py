@@ -18,6 +18,7 @@ from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from scipy.signal import find_peaks
 
 # --- FastAPI Setup for PWA Hosting ---
 app = FastAPI()
@@ -56,7 +57,7 @@ async def infer_file(file: UploadFile = File(...)):
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     # State tracking for area/distance measurements for the mobile session
-    wrist_path, state = [], {"start_y": None}
+    wrist_path, state = [], {"start_y": None, "start_x": None}
     try:
         while True:
             # Receive base64 frame from phone
@@ -69,8 +70,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
             if frame is not None and app_gui is not None:
                 # Process frame using the logic in the GUI class
-                # Defaulting to Chest expansion for live mobile view
-                ann, m, corr = app_gui.analyze_and_annotate(frame, "Chest expansion", wrist_path, state)
+                ann, m, corr = app_gui.analyze_and_annotate(frame, app_gui.exercises[0], wrist_path, state)
                 
                 # Encode processed frame back to base64
                 _, buffer = cv2.imencode('.jpg', ann)
@@ -88,6 +88,49 @@ async def websocket_endpoint(websocket: WebSocket):
 def run_server():
     uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
 
+# --- Custom Screen Calibration Pop-up Window ---
+class ScreenSetupDialog(tk.Toplevel):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.title("Display Calibration Setup")
+        self.geometry("380x200")
+        self.resizable(False, False)
+        self.configure(bg="#f8fafc")
+        
+        # Lock visual focus onto pop-up window
+        self.transient(parent)
+        self.grab_set()
+        
+        lbl_style = {"bg": "#f8fafc", "fg": "#e91e63", "font": ("Segoe UI", 10, "bold")}
+        
+        tk.Label(self, text="Screen Aspect Ratio (e.g., 16:9):", **lbl_style).pack(pady=(20, 2))
+        self.aspect_entry = ttk.Entry(self, width=30)
+        self.aspect_entry.pack(pady=2)
+        self.aspect_entry.insert(0, "16:9")
+        
+        tk.Label(self, text="Screen Resolution (e.g., 1920x1080):", **lbl_style).pack(pady=(10, 2))
+        self.res_entry = ttk.Entry(self, width=30)
+        self.res_entry.pack(pady=2)
+        self.res_entry.insert(0, "1920x1080")
+        
+        btn_frame = tk.Frame(self, bg="#f8fafc")
+        btn_frame.pack(pady=15)
+        
+        submit_btn = ttk.Button(btn_frame, text="Enter Configuration", command=self.on_submit)
+        submit_btn.pack()
+        
+        # Bind enter/return key triggers directly to entry forms
+        self.aspect_entry.bind("<Return>", lambda event: self.on_submit())
+        self.res_entry.bind("<Return>", lambda event: self.on_submit())
+        
+        self.aspect_entry.focus_set()
+        parent.wait_window(self)
+
+    def on_submit(self):
+        aspect_ratio = self.aspect_entry.get().strip()
+        resolution = self.res_entry.get().strip()
+        self.destroy()
+
 # --- Terminal Minimization ---
 try:
     ctypes.windll.user32.ShowWindow(ctypes.windll.kernel32.GetConsoleWindow(), 6)
@@ -100,6 +143,9 @@ class ExerciseGUI:
         self.root.title("Medical Exercise Analysis System - Live Tracking")
         self.root.geometry("1450x850")
         
+        # Trigger calibration setup popup immediately on launch
+        ScreenSetupDialog(self.root)
+        
         # Start the Background Web Server
         threading.Thread(target=run_server, daemon=True).start()
         
@@ -110,12 +156,30 @@ class ExerciseGUI:
 
         self.kmeans_model = None
         self.cluster_to_group_map = {} 
+        self.last_run_exercise = None  # Tracks most recently executed exercise
+        
+        # Expanded 8-Stage Exercise Suite Column Mapping
         self.exercise_columns = [
             "Chest expansion exercise", 
             "Hand gripping exercise", 
             "Shoulder circumduction exercise", 
             "Upper limb circumduction exercise", 
-            "Wall walking exercise"
+            "Wall walking (Frontal)",
+            "Wall walking (Lateral)",
+            "Lateral trunk flexion exercise",
+            "Overhead grooming system"
+        ]
+
+        # Short names for GUI layout routing
+        self.exercises = [
+            "Chest expansion", 
+            "Hand gripping", 
+            "Shoulder circumduction", 
+            "Upper limb circumduction", 
+            "Wall walking (Frontal)",
+            "Wall walking (Lateral)",
+            "Lateral trunk flexion",
+            "Overhead grooming"
         ]
 
         self.style = ttk.Style()
@@ -139,6 +203,7 @@ class ExerciseGUI:
         self.display_width, self.display_height = 600, 400
         self.video_paths = {}
         self.results_data = [] 
+        self.time_series_data = []  # Added list to store full continuous parameter trajectories over time
         self.is_webcam_running = False
         self.is_recording = False
         self.video_writer = None
@@ -167,6 +232,10 @@ class ExerciseGUI:
         # ========== BUILD PROGRESS SUMMARY TAB ==========
         self.build_summary_tab()
         
+        # Link global reference pointer
+        global app_gui
+        app_gui = self
+
         # Start periodic updates for summary tab
         self.update_summary_display()
 
@@ -195,15 +264,19 @@ class ExerciseGUI:
         row2_frame.pack(fill=tk.X, pady=2)
         
         file_frame = ttk.LabelFrame(row1_frame, text=" File Inference ", padding=5)
-        file_frame.pack(side=tk.LEFT, padx=5, fill=tk.Y)
-        self.exercises = ["Chest expansion", "Hand gripping", "Shoulder circumduction", 
-                          "Upper limb circumduction", "Wall walking"]
-        for ex in self.exercises:
-            ttk.Button(file_frame, text=f"Load {ex}", command=lambda e=ex: self.load_video(e)).pack(side=tk.LEFT, padx=2)
+        file_frame.pack(side=tk.TOP, padx=5, fill=tk.X, pady=5)
+        
+        # Grid array layout to dynamically keep GUI clean with 8 exercise load buttons
+        for idx, ex in enumerate(self.exercises):
+            ttk.Button(file_frame, text=f"Load {ex}", command=lambda e=ex: self.load_video(e)).grid(row=idx//4, column=idx%4, padx=5, pady=2, sticky="ew")
 
-        webcam_frame = ttk.LabelFrame(row1_frame, text=" Live Camera ", padding=5)
+        # Pose Skeleton Action Button placed directly in file inference section
+        self.skeleton_btn = ttk.Button(file_frame, text="💀 Pose Skeleton (Black Background View)", command=self.trigger_pose_skeleton)
+        self.skeleton_btn.grid(row=2, column=0, columnspan=4, padx=5, pady=6, sticky="ew")
+
+        webcam_frame = ttk.LabelFrame(row2_frame, text=" Live Camera ", padding=5)
         webcam_frame.pack(side=tk.LEFT, padx=5, fill=tk.Y)
-        self.mode_select = ttk.Combobox(webcam_frame, values=self.exercises, state="readonly", width=20)
+        self.mode_select = ttk.Combobox(webcam_frame, values=self.exercises, state="readonly", width=22)
         self.mode_select.pack(side=tk.LEFT, padx=5)
         ttk.Button(webcam_frame, text="Start", command=self.start_webcam).pack(side=tk.LEFT, padx=2)
         self.record_btn = ttk.Button(webcam_frame, text="Record", command=self.toggle_recording)
@@ -255,7 +328,6 @@ class ExerciseGUI:
 
     def build_summary_tab(self):
         """Build the Progress Summary tab with all groups"""
-        # Create scrollable frame
         summary_container = ttk.Frame(self.summary_tab)
         summary_container.pack(fill=tk.BOTH, expand=True, padx=15, pady=15)
         
@@ -291,7 +363,7 @@ class ExerciseGUI:
         self.encouragement_frame = ttk.LabelFrame(grid_frame, text="🌟 Keep Up the Good Work!", padding=12)
         self.encouragement_frame.grid(row=1, column=0, padx=10, pady=10, sticky="nsew")
         self.encouragement_label = tk.Label(self.encouragement_frame, text="Your progress builds day by day", 
-                                            font=("Segoe UI", 10), bg=self.bg_color, fg="#444444", wraplength=320, justify=tk.LEFT)
+                                           font=("Segoe UI", 10), bg=self.bg_color, fg="#444444", wraplength=320, justify=tk.LEFT)
         self.encouragement_label.pack(anchor=tk.W)
         
         # Group 4: Feeling Tired Today?
@@ -320,22 +392,17 @@ class ExerciseGUI:
 
     def update_summary_display(self):
         """Update all groups in the Progress Summary tab"""
-        # Update Today's Highlights
         highlights = self.get_todays_highlights()
         self.highlights_label.config(text=highlights)
         
-        # Update Comparison Chart
         self.update_comparison_chart()
         
-        # Update Encouragement Message
         encouragement = self.get_encouragement_message()
         self.encouragement_label.config(text=encouragement)
         
-        # Update Tired Tips
         tired_tips = self.get_tired_tips()
         self.tired_label.config(text=tired_tips)
         
-        # Update Exercise Summary Table
         self.update_summary_table()
         
         # Schedule next update
@@ -349,7 +416,6 @@ class ExerciseGUI:
         total = sum(item['Measurement'] for item in self.results_data)
         avg = total / len(self.results_data)
         
-        # Find best exercise
         best = max(self.results_data, key=lambda x: x['Measurement']) if self.results_data else None
         
         highlights = []
@@ -371,23 +437,20 @@ class ExerciseGUI:
         return "\n\n".join(highlights)
 
     def update_comparison_chart(self):
-        """Update the comparison bar chart"""
-        # Clear previous chart
+        """Update the comparison bar chart across 8 exercise stages"""
         for widget in self.comparison_canvas_frame.winfo_children():
             widget.destroy()
         
-        # Create figure
-        fig, ax = plt.subplots(figsize=(5, 3.5))
+        fig, ax = plt.subplots(figsize=(5.5, 3.5))
         
         if self.results_data and self.kmeans_model is not None:
-            # Map user data
             user_map = {item['Exercise']: item['Measurement'] for item in self.results_data}
             
             try:
                 df = pd.read_csv("training.csv")
                 avg_values = df[self.exercise_columns].mean()
                 
-                short_names = ['Chest', 'Hand', 'Shoulder', 'U.Limb', 'Wall']
+                short_names = ["Chest", "Grip", "Shld", "U.Limb", "Wall_F", "Wall_L", "Trunk", "Groom"]
                 user_vals = [user_map.get(ex, 0) for ex in self.exercises]
                 avg_vals = [avg_values[col] for col in self.exercise_columns]
                 
@@ -399,22 +462,18 @@ class ExerciseGUI:
                 ax.set_ylabel('Score')
                 ax.set_title('Your Performance vs Others')
                 ax.set_xticks(x)
-                ax.set_xticklabels(short_names)
+                ax.set_xticklabels(short_names, rotation=30, ha='right', fontsize=8)
                 ax.legend()
                 plt.tight_layout()
                 
             except Exception:
                 ax.text(0.5, 0.5, "Run 'Train ML Model' first", ha='center', va='center', transform=ax.transAxes)
         else:
-            if not self.results_data:
-                msg = "Complete exercises to see comparison"
-            else:
-                msg = "Train ML model to see comparison"
+            msg = "Complete exercises & Train ML model to see comparison" if self.results_data else "Complete exercises to see comparison"
             ax.text(0.5, 0.5, msg, ha='center', va='center', transform=ax.transAxes)
             ax.set_xticks([])
             ax.set_yticks([])
         
-        # Embed in tkinter
         canvas = FigureCanvasTkAgg(fig, self.comparison_canvas_frame)
         canvas.draw()
         canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
@@ -446,7 +505,6 @@ class ExerciseGUI:
             "⭐ Celebrate every small victory!"
         ]
         
-        # Add specific tip based on weak areas
         if self.results_data:
             weak = [item for item in self.results_data if item['Measurement'] < 40]
             if weak:
@@ -463,7 +521,6 @@ class ExerciseGUI:
             self.summary_text.insert(tk.END, "No exercise data available yet.\n\nLoad videos and run inference to see your results here.")
             return
         
-        # Create formatted table
         table = f"{'Exercise':<30} {'Score':<12} {'Status':<15}\n"
         table += "-" * 57 + "\n"
         
@@ -474,11 +531,10 @@ class ExerciseGUI:
             elif score >= 40:
                 status = "Good ✓"
             else:
-                status = "Needs work ⚠"
+                status = "Needs work ⚠️"
             
             table += f"{item['Exercise']:<30} {score:<12.1f} {status:<15}\n"
         
-        # Add overall stats
         if self.results_data:
             total = sum(item['Measurement'] for item in self.results_data)
             avg = total / len(self.results_data)
@@ -487,8 +543,6 @@ class ExerciseGUI:
         
         self.summary_text.insert(tk.END, table)
 
-    # ========== ALL ORIGINAL METHODS BELOW - UNCHANGED ==========
-    
     def train_ml_model(self):
         try:
             df = pd.read_csv("training.csv")
@@ -517,14 +571,13 @@ class ExerciseGUI:
             plt.close()
             messagebox.showinfo("ML Success", f"Model trained successfully!\nPCA graph saved as '{graph_path}'.")
             
-            # Refresh summary after training
             self.update_summary_display()
             
         except Exception as e:
             messagebox.showerror("ML Error", f"Could not train model: {str(e)}")
 
     def predict_stage(self):
-        """Predict user's stage and display comparison chart - only ONE graph now"""
+        """Predict user's stage and display comparison chart"""
         if self.kmeans_model is None:
             messagebox.showwarning("Predict Error", "Please train the ML model first.")
             return
@@ -545,15 +598,12 @@ class ExerciseGUI:
             group_name = self.cluster_to_group_map.get(prediction_idx, "Unknown Group")
             cluster_centers = self.kmeans_model.cluster_centers_[prediction_idx]
             
-            # Update the comparison chart in the summary tab instead of creating a new popup
-            # Clear previous chart
             for widget in self.comparison_canvas_frame.winfo_children():
                 widget.destroy()
             
-            # Create new figure with prediction info
-            fig, ax = plt.subplots(figsize=(5, 3.5))
+            fig, ax = plt.subplots(figsize=(5.5, 3.5))
             
-            labels = ["Chest", "Hand", "Shoulder", "U.Limb", "Wall"]
+            labels = ["Chest", "Grip", "Shld", "U.Limb", "Wall_F", "Wall_L", "Trunk", "Groom"]
             x = np.arange(len(labels))
             width = 0.35
             
@@ -562,16 +612,14 @@ class ExerciseGUI:
             ax.set_ylabel('Measurement Values')
             ax.set_title(f'Your Performance vs {group_name} Group')
             ax.set_xticks(x)
-            ax.set_xticklabels(labels)
+            ax.set_xticklabels(labels, rotation=30, ha='right', fontsize=8)
             ax.legend()
             plt.tight_layout()
             
-            # Embed in tkinter
             canvas = FigureCanvasTkAgg(fig, self.comparison_canvas_frame)
             canvas.draw()
             canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
             
-            # Also update the highlights to show the predicted group
             current_highlights = self.highlights_label.cget("text")
             if "Predicted Group:" not in current_highlights:
                 new_highlights = f"🔮 Predicted Group: {group_name}\n\n" + current_highlights
@@ -599,17 +647,61 @@ class ExerciseGUI:
                 threading.Thread(target=lambda: messagebox.showwarning("Exercise Reminder", "It is time for your exercises!")).start()
         self.root.after(10000, self.check_schedule)
 
+    # MODIFIED: Selects the top 10 local peaks and sorts them chronologically from start to end by 'Time (s)'
     def export_excel(self):
-        if self.results_data:
-            df = pd.DataFrame(self.results_data)
+        if self.time_series_data or self.results_data:
             now = datetime.datetime.now()
-            df['Date'] = now.strftime("%Y-%m-%d")
-            df['Time_of_Measurement'] = now.strftime("%H:%M:%S")
-            filename = f"Daily_Report_{now.strftime('%Y%m%d')}.xlsx"
-            df.to_excel(filename, index=False)
-            messagebox.showinfo("Success", f"Recorded in {filename}")
+            filename = f"Daily_Report_{now.strftime('%Y%m%d_%H%M%S')}.xlsx"
+            
+            with pd.ExcelWriter(filename) as writer:
+                # Sheet 1: Continuous parameter trajectory tracking over time
+                if self.time_series_data:
+                    df_series = pd.DataFrame(self.time_series_data)
+                    df_series.to_excel(writer, sheet_name="Time_Series_Tracking", index=False)
+                    
+                    # Detect true local peaks for each exercise group
+                    peak_records = []
+                    for ex_name, group_df in df_series.groupby("Exercise"):
+                        vals = group_df["Measured_Value"].values
+                        
+                        # Set dynamic threshold and minimum distance between repetitions
+                        prominence = (vals.max() - vals.min()) * 0.1 if len(vals) > 0 and vals.max() > vals.min() else None
+                        peaks_indices, _ = find_peaks(vals, distance=15, prominence=prominence)
+                        
+                        if len(peaks_indices) > 0:
+                            ex_peaks = group_df.iloc[peaks_indices]
+                        else:
+                            ex_peaks = group_df
+                            
+                        peak_records.append(ex_peaks)
+                    
+                    if peak_records:
+                        df_all_peaks = pd.concat(peak_records, ignore_index=True)
+                    else:
+                        df_all_peaks = df_series
+                    
+                    # 1. Select the top 10 largest local peak values
+                    df_top10 = df_all_peaks.sort_values(by="Measured_Value", ascending=False).head(10)
+                    
+                    # 2. Sort those top 10 peaks chronologically from start to end by Time (s)
+                    df_top10_chronological = df_top10.sort_values(by="Time (s)", ascending=True).reset_index(drop=True)
+                    df_top10_chronological.index = df_top10_chronological.index + 1  # 1-based index
+                    df_top10_chronological.index.name = "Peak No."
+                    
+                    # Format sheet layout to clearly show peak measurements and their exact time in seconds
+                    df_top10_export = df_top10_chronological[["Exercise", "Measured_Value", "Parameter_Type", "Time (s)", "Frame", "Is_Correct"]]
+                    df_top10_export.columns = ["Exercise", "Peak Measured Value", "Parameter Type", "Time (s)", "Frame", "Is_Correct"]
+                    df_top10_export.to_excel(writer, sheet_name="Peak_Summary", index=True)
+                    
+                elif self.results_data:
+                    df_peaks = pd.DataFrame(self.results_data)
+                    df_peaks['Date'] = now.strftime("%Y-%m-%d")
+                    df_peaks['Time_of_Measurement'] = now.strftime("%H:%M:%S")
+                    df_peaks.to_excel(writer, sheet_name="Peak_Summary", index=False)
+                    
+            messagebox.showinfo("Success", f"Full time-series trajectories and Top 10 peak summaries recorded in:\n{filename}")
         else:
-            messagebox.showwarning("No Data", "Run inference first.")
+            messagebox.showwarning("No Data", "Run file inference first to generate tracking data.")
 
     def toggle_pause(self, event=None):
         if self.pause_event.is_set(): self.pause_inference()
@@ -638,30 +730,56 @@ class ExerciseGUI:
         angle = np.abs(radians * 180.0 / np.pi)
         return angle if angle <= 180 else 360 - angle
 
-    def analyze_and_annotate(self, frame, name, wrist_path, state):
+    def analyze_and_annotate(self, frame, name, wrist_path, state, skeleton_only=False):
         results = self.model(frame, verbose=False, device=self.device, half=(self.device=='cuda'))
-        annotated = results[0].plot()
+        
+        if skeleton_only:
+            black_canvas = np.zeros_like(frame)
+            annotated = results[0].plot(img=black_canvas, boxes=False, labels=False, conf=False)
+        else:
+            annotated = results[0].plot()
+            
         metrics = {"val": 0, "type": ""}
         is_correct = False
+        
         if results[0].keypoints.xy.shape[1] > 9:
             kpts = results[0].keypoints.xy[0].cpu().numpy()
-            s, e, w = kpts[5], kpts[7], kpts[9]
+            s, e, w = kpts[5], kpts[7], kpts[9] # Shoulder, Elbow, Wrist
+            hip, l_shoulder, nose = kpts[11], kpts[6], kpts[0]
+            
             if name == "Chest expansion":
                 metrics = {"val": self.calculate_angle(s, e, w), "type": "Angle (Degrees)"}
-                if metrics["val"] < 160: is_correct = True
+                if metrics["val"] < 90: is_correct = True
+                
             elif name == "Hand gripping":
                 metrics = {"val": self.calculate_angle(e, w, [w[0], w[1]+100]), "type": "Wrist Angle (Degrees)"}
                 if metrics["val"] > 30: is_correct = True
+                
             elif name in ["Shoulder circumduction", "Upper limb circumduction"]:
                 wrist_path.append(w)
                 if len(wrist_path) > 5:
                     hull = cv2.convexHull(np.array(wrist_path).astype(np.int32))
                     metrics = {"val": cv2.contourArea(hull), "type": "Area (Pixels^2)"}
                     if metrics["val"] > 5000: is_correct = True
-            elif name == "Wall walking":
-                if state['start_y'] is None: state['start_y'] = w[1]
+                    
+            elif name == "Wall walking (Frontal)":
+                if state.get('start_y') is None: state['start_y'] = w[1]
                 metrics = {"val": abs(state['start_y'] - w[1]), "type": "Y-Distance (Pixels)"}
                 if metrics["val"] > 50: is_correct = True
+                
+            elif name == "Wall walking (Lateral)": 
+                if state.get('start_x') is None: state['start_x'] = w[0]
+                metrics = {"val": abs(state['start_x'] - w[0]), "type": "X-Displacement (Pixels)"}
+                if metrics["val"] > 45: is_correct = True
+                
+            elif name == "Lateral trunk flexion": 
+                metrics = {"val": self.calculate_angle(nose, s, hip), "type": "Trunk Angle (Degrees)"}
+                if metrics["val"] > 15: is_correct = True
+                
+            elif name == "Overhead grooming": 
+                metrics = {"val": float(abs(w[1] - nose[1])), "type": "Hand-to-Nose Delta (Pixels)"}
+                if w[1] < nose[1]: is_correct = True 
+                
         return annotated, metrics, is_correct
 
     def update_ui_text(self, metrics, is_correct, session_id):
@@ -689,7 +807,7 @@ class ExerciseGUI:
 
     def run_webcam_loop(self, name):
         cap = cv2.VideoCapture(0)
-        wrist_path, state = [], {"start_y": None}
+        wrist_path, state = [], {"start_y": None, "start_x": None}
         while self.is_webcam_running and cap.isOpened():
             self.pause_event.wait()
             ret, frame = cap.read()
@@ -707,6 +825,7 @@ class ExerciseGUI:
     def start_inference(self):
         self.inference_stop_event.set()
         self.active_session_id += 1 
+        self.time_series_data.clear() # Clear time-series cache for new run
         threading.Thread(target=self.run_inference_process, args=(self.active_session_id,), daemon=True).start()
 
     def run_inference_process(self, session_id):
@@ -714,22 +833,77 @@ class ExerciseGUI:
         video_items_snapshot = list(self.video_paths.items())
         for name, path in video_items_snapshot:
             if self.inference_stop_event.is_set(): return
+            
+            if session_id == self.active_session_id:
+                self.last_run_exercise = name
+                
             cap = cv2.VideoCapture(path)
-            wrist_path, state, max_val = [], {"start_y": None}, 0
+            fps = cap.get(cv2.CAP_PROP_FPS)
+            if fps <= 0: fps = 30.0  # Fallback to standard 30 FPS if metadata reading fails
+            
+            wrist_path, state, max_val = [], {"start_y": None, "start_x": None}, 0
+            
+            frame_idx = 0
             while cap.isOpened():
                 if self.inference_stop_event.is_set(): cap.release(); return
                 self.pause_event.wait()
                 ret, frame = cap.read()
                 if not ret: break
+                
                 ann, m, corr = self.analyze_and_annotate(frame, name, wrist_path, state)
                 max_val = max(max_val, m["val"])
+                
+                # Calculate precise time in seconds
+                time_in_seconds = round(frame_idx / fps, 2)
+                
+                # Append frame parameter tracking using "Time (s)"
+                self.time_series_data.append({
+                    "Time (s)": time_in_seconds,
+                    "Frame": frame_idx,
+                    "Exercise": name,
+                    "Parameter_Type": m["type"],
+                    "Measured_Value": round(m["val"], 2),
+                    "Is_Correct": corr
+                })
+                frame_idx += 1
+                
                 self.update_gui_image(self.label_proc, cv2.resize(ann, (600, 400)), session_id)
                 self.root.after(1, lambda m=m, c=corr, s=session_id: self.update_ui_text(m, c, s))
             cap.release()
             if session_id == self.active_session_id:
                 self.results_data.append({"Exercise": name, "Measurement": round(max_val, 2)})
-                # Refresh summary display when new data is added
                 self.update_summary_display()
+
+    # Trigger method for Pose Skeleton visualization
+    def trigger_pose_skeleton(self):
+        if not self.last_run_exercise or self.last_run_exercise not in self.video_paths:
+            messagebox.showwarning("Execution Error", "No past exercise file run trace detected to analyze standard joints skeleton.")
+            return
+        self.inference_stop_event.set()
+        self.active_session_id += 1 
+        threading.Thread(target=self.play_pose_skeleton, args=(self.active_session_id,), daemon=True).start()
+
+    # Streaming loop for isolated skeleton view on a black background
+    def play_pose_skeleton(self, session_id):
+        self.inference_stop_event.clear()
+        target_path = self.video_paths[self.last_run_exercise]
+        cap = cv2.VideoCapture(target_path)
+        wrist_path, state = [], {"start_y": None, "start_x": None}
+        
+        self.status_label.config(text=f"Status: Playing Skeleton Only ({self.last_run_exercise})")
+        
+        while cap.isOpened():
+            if self.inference_stop_event.is_set(): cap.release(); return
+            self.pause_event.wait()
+            ret, frame = cap.read()
+            if not ret: break
+            
+            ann, m, corr = self.analyze_and_annotate(frame, self.last_run_exercise, wrist_path, state, skeleton_only=True)
+            self.update_gui_image(self.label_proc, cv2.resize(ann, (600, 400)), session_id)
+            self.root.after(1, lambda m=m, c=corr, s=session_id: self.update_ui_text(m, c, s))
+        cap.release()
+        if session_id == self.active_session_id:
+            self.status_label.config(text=f"Status: Completed Skeleton Stream View | Device: {self.device.upper()}")
 
 if __name__ == "__main__":
     root = tk.Tk()
